@@ -1,0 +1,118 @@
+# syntax=docker/dockerfile:1
+# =============================================================================
+# HeyPuter/firefox-wasm — Gecko (Firefox エンジン) を WebAssembly にビルドし、
+# chrome-demo (フル Firefox UI) を Vite サーバーで配信するイメージ。
+#
+# !!! 重量級ビルドの注意 !!!
+#   - objdir だけで ~26GB。ビルド中はディスク空き ~60GB 以上を推奨。
+#   - 12 コアで 25〜50 分、4 vCPU だと 2〜4 時間かかる (CI 実測値)。
+#   - RELEASE ビルドの最終 wasm-opt で RAM が大きくスパイクする。
+#     RAM 32GB 以上推奨。OOM で落ちる場合はホストに swap を足すか、
+#     `--build-arg GECKO_RELEASE=` (空 = デバッグビルド) を指定する。
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Stage 1: builder — Gecko エンジン + gecko.js + chrome-demo アセットをビルド
+# ---------------------------------------------------------------------------
+FROM ubuntu:24.04 AS builder
+
+ARG REPO_URL=https://github.com/HeyPuter/firefox-wasm.git
+ARG REPO_REF=master
+# "1" で最適化ビルド (-O3 + wasm-opt, wasm は zstd 圧縮)。空文字でデバッグビルド。
+ARG GECKO_RELEASE=1
+ARG RUST_VERSION=1.95.0
+ARG PNPM_VERSION=9.12.0
+# bindgen 用 libclang。emscripten 6.0.1 の libc++ ヘッダ (LLVM 23 世代) を
+# パースするため clang >= 19 が必要。Ubuntu 標準の 18 では足りない。
+ARG LLVM_VERSION=21
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    MACH_NO_TERMINAL_FOOTER=1 \
+    MOZBUILD_STATE_PATH=/root/.mozbuild
+
+# ホストツールチェーン + Gecko ビルドの雑多な依存
+# (clang/llvm-dev は mozconfig の HOST_CC/HOST_CXX 用。libpulse-dev は README 記載の必須依存)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential clang llvm-dev libpulse-dev \
+        python3 python3-venv python3-pip \
+        git mercurial curl wget ca-certificates \
+        unzip zip zstd rsync xz-utils bzip2 \
+        m4 pkg-config perl file procps \
+        lsb-release gnupg software-properties-common \
+    && rm -rf /var/lib/apt/lists/*
+
+# apt.llvm.org から bindgen 用の新しい libclang を導入
+# (mozconfig.full.emscripten が $LIBCLANG_PATH を参照する)
+RUN wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh \
+    && chmod +x /tmp/llvm.sh \
+    && /tmp/llvm.sh ${LLVM_VERSION} \
+    && apt-get install -y --no-install-recommends libclang-${LLVM_VERSION}-dev \
+    && rm -rf /var/lib/apt/lists/* /tmp/llvm.sh
+ENV LIBCLANG_PATH=/usr/lib/llvm-${LLVM_VERSION}/lib
+
+# Node 22 + pnpm (リポジトリの packageManager ピンに合わせる)
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/* \
+    && npm install -g pnpm@${PNPM_VERSION}
+
+# Rust (rust-src + wasm32-unknown-emscripten ターゲット)
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+    | sh -s -- -y --profile minimal \
+        --default-toolchain ${RUST_VERSION} \
+        --component rust-src \
+        --target wasm32-unknown-emscripten
+ENV PATH=/root/.cargo/bin:$PATH
+
+WORKDIR /build
+RUN git clone --depth 1 --branch ${REPO_REF} ${REPO_URL} .
+
+# ビルド本体。
+#   - emsdk 6.0.1 は Makefile の `emsdk` ターゲットがリポジトリ内に自動で
+#     clone / install / activate + WISP ソケットパッチ適用まで行う。
+#   - `make libxul` = pinned Gecko fork の shallow clone → mach build (×2 +
+#     `-r` relink) → gecko.js パッケージ (rspack バンドル) のビルド。
+#   - `make chrome-assets` = chrome-demo が使う GRE リソースアーカイブ
+#     (public/chrome-assets.tar.zst) を objdir からステージング。
+#   - ulimit -s: wasm-opt / wasm-ld が ~250MB のモジュールでデフォルト 8MB
+#     スタックを食い潰して SIGSEGV するため、無制限に引き上げる (CI と同じ)。
+RUN mkdir -p "${MOZBUILD_STATE_PATH}" \
+    && bash -c 'ulimit -s unlimited || ulimit -s 524288 || true; \
+        make libxul RELEASE=${GECKO_RELEASE} \
+        && make chrome-assets RELEASE=${GECKO_RELEASE}'
+
+# ---------------------------------------------------------------------------
+# Stage 2: runtime — chrome-demo を Vite で配信 (WISP プロキシ同梱)
+# ビルド成果物 (gecko.js/dist + chrome-assets) だけを持ち込み、~数十 GB の
+# objdir / firefox ソース / emsdk はイメージに含めない。
+# ---------------------------------------------------------------------------
+FROM node:22-slim AS runtime
+
+ARG PNPM_VERSION=9.12.0
+RUN npm install -g pnpm@${PNPM_VERSION}
+
+WORKDIR /app
+
+# pnpm ワークスペースの骨格
+COPY --from=builder /build/package.json /build/pnpm-lock.yaml /build/pnpm-workspace.yaml ./
+
+# gecko.js パッケージ (配信されるのは dist/ の ESM バンドル + gecko.wasm[.zst])
+COPY --from=builder /build/gecko.js/package.json ./gecko.js/package.json
+COPY --from=builder /build/gecko.js/dist ./gecko.js/dist
+
+# chrome-demo (フル Firefox UI) — public/ にはビルド済み chrome-assets.tar.zst を含む
+COPY --from=builder /build/demo/chrome/package.json /build/demo/chrome/vite.config.ts /build/demo/chrome/index.html ./demo/chrome/
+COPY --from=builder /build/demo/chrome/src ./demo/chrome/src
+COPY --from=builder /build/demo/chrome/public ./demo/chrome/public
+
+# embed-demo (最小の埋め込みデモ) — おまけで同梱。使う場合は CMD を差し替える
+COPY --from=builder /build/demo/embed/package.json /build/demo/embed/vite.config.ts /build/demo/embed/index.html ./demo/embed/
+COPY --from=builder /build/demo/embed/src ./demo/embed/src
+
+RUN pnpm install --frozen-lockfile
+
+EXPOSE 5173
+
+# Vite dev サーバー: COOP/COEP ヘッダ (SharedArrayBuffer に必須) と
+# /wisp の WISP プロキシは demo/chrome/vite.config.ts が面倒を見る。
+CMD ["pnpm", "--filter", "chrome-demo", "exec", "vite", "--host", "0.0.0.0", "--port", "5173", "--strictPort"]

@@ -1,0 +1,13 @@
+{
+  "name": "firefox-wasm-server",
+  "private": true,
+  "type": "module",
+  "description": "Serves the prebuilt firefox-wasm chrome-demo with COOP/COEP headers and a WISP proxy at /wisp.",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "@mercuryworkshop/wisp-js": "^0.4.1",
+    "express": "^4.21.0"
+  }
+}

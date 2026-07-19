@@ -1,0 +1,39 @@
+services:
+  firefox-wasm:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      # 新しいリリースに更新する場合:
+      # args:
+      #   CHROME_DEMO_URL: https://github.com/HeyPuter/firefox-wasm/releases/download/vX.Y.Z/chrome-demo-vX.Y.Z.tar.gz
+    container_name: firefox-wasm
+    restart: unless-stopped
+
+    # --- 接続パターン A: cloudflared がホスト上で動いている場合 ---------------
+    # ループバックのみに公開し、ingress は http://localhost:8080 に向ける。
+    # (トンネル経由以外で直接アクセスされないよう 127.0.0.1 に束縛)
+    ports:
+      - "127.0.0.1:8080:8080"
+
+    # --- 接続パターン B: cloudflared もコンテナの場合 -------------------------
+    # 上の ports: を削除し、cloudflared と同じネットワークに参加させて
+    # ingress を http://firefox-wasm:8080 に向ける。
+    # networks:
+    #   - cloudflared
+
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://localhost:8080/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+# パターン B 用: 既存の cloudflared が属するネットワーク名に合わせて変更
+# networks:
+#   cloudflared:
+#     external: true
+#     name: cloudflared
