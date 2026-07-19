@@ -10,9 +10,14 @@ updates:
       interval: weekly
     # node は LTS (現行 22) を維持、ubuntu は Gecko ビルド用ツールチェーンの
     # 検証済み構成を維持するため、メジャー更新の提案は受けない。
+    # ubuntu はさらにマイナーも ignore し LTS (24.04) に固定する
+    # (24.10 等の中間リリースはサポート 9 ヶ月で LTS より先に EOL になるため)。
+    # 次期 LTS (26.04) への移行は手動で行う。
     # (ベースイメージ内のパッチ更新や脆弱性アラートはこの設定でも届く)
     ignore:
       - dependency-name: node
         update-types: ["version-update:semver-major"]
       - dependency-name: ubuntu
-        update-types: ["version-update:semver-major"]
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
