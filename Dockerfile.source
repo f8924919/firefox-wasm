@@ -14,7 +14,7 @@
 # ---------------------------------------------------------------------------
 # Stage 1: builder — Gecko エンジン + gecko.js + chrome-demo アセットをビルド
 # ---------------------------------------------------------------------------
-FROM ubuntu:24.04 AS builder
+FROM ubuntu:24.10 AS builder
 
 ARG REPO_URL=https://github.com/HeyPuter/firefox-wasm.git
 ARG REPO_REF=master
