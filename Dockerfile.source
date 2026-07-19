@@ -105,6 +105,14 @@ COPY --from=builder /build/demo/chrome/package.json /build/demo/chrome/vite.conf
 COPY --from=builder /build/demo/chrome/src ./demo/chrome/src
 COPY --from=builder /build/demo/chrome/public ./demo/chrome/public
 
+# 後付けスクリプト2点 (日本語 IME シム + 不正 WISP URL ガード。詳細は各
+# ファイル冒頭)。Vite dev サーバーは public/ をルート直下で配信するので、
+# ソースの index.html に script タグを注入する。
+COPY wisp-opts-guard.js ime-shim.js ./demo/chrome/public/
+RUN sed -i 's#</body>#  <script src="/wisp-opts-guard.js"></script>\n  <script src="/ime-shim.js"></script>\n</body>#' demo/chrome/index.html \
+    && grep -q 'ime-shim.js' demo/chrome/index.html \
+    && grep -q 'wisp-opts-guard.js' demo/chrome/index.html
+
 # embed-demo (最小の埋め込みデモ) — おまけで同梱。使う場合は CMD を差し替える
 COPY --from=builder /build/demo/embed/package.json /build/demo/embed/vite.config.ts /build/demo/embed/index.html ./demo/embed/
 COPY --from=builder /build/demo/embed/src ./demo/embed/src
