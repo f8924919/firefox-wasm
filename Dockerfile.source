@@ -86,7 +86,7 @@ RUN mkdir -p "${MOZBUILD_STATE_PATH}" \
 # ビルド成果物 (gecko.js/dist + chrome-assets) だけを持ち込み、~数十 GB の
 # objdir / firefox ソース / emsdk はイメージに含めない。
 # ---------------------------------------------------------------------------
-FROM node:22-slim AS runtime
+FROM node:26-slim AS runtime
 
 ARG PNPM_VERSION=9.12.0
 RUN npm install -g pnpm@${PNPM_VERSION}
