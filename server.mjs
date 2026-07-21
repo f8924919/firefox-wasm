@@ -37,6 +37,12 @@ app.use(express.static('dist', {
     // ダウンロード進捗バーはそのまま機能する。
     if (path.endsWith('.zst')) {
       res.setHeader('Content-Type', 'application/octet-stream');
+      // gecko.wasm.zst / chrome-assets.tar.zst はリリース更新時にしか変わらない
+      // 巨大ファイル。ファイル名にハッシュが無いので immutable にはできない代わりに、
+      // エッジ (s-maxage) だけ長期キャッシュし、ブラウザ (max-age=0) には毎回
+      // ETag 再検証させる — 304 はエッジが返すので Tunnel には流れない。
+      // イメージ更新時は Cloudflare 側のキャッシュパージが必要。
+      res.setHeader('Cache-Control', 'public, max-age=0, s-maxage=31536000');
     }
     // Vite のハッシュ付きアセットは不変なので長期キャッシュ
     if (/\/assets\//.test(path.replace(/\\/g, '/'))) {
