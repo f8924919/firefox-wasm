@@ -67,16 +67,19 @@ RUN pnpm install --frozen-lockfile \
     && test -f demo/chrome/dist/index.html \
     && test -f demo/chrome/dist/gecko.wasm.zst
 
-# 後付けスクリプト2点をビルド済み dist に注入する:
+# 後付けスクリプト3点をビルド済み dist に注入する:
 #   - ime-shim.js: 上流は canvas への keydown/keyup 転送のみで composition
 #     イベント非対応のため IME (日本語等) 入力が効かない問題の修正
 #   - wisp-opts-guard.js: 過去の壊れたビルドが localStorage に残した不正
 #     WISP URL (→ 全サイト connection timeout) の自動除去
+#   - download-bridge.js: WASM Firefox 内のダウンロードを OPFS 経由で
+#     ホスト (実ブラウザ) のダウンロードとして取り出す橋渡し
 # 詳細は各ファイル冒頭のコメントを参照。
-COPY wisp-opts-guard.js ime-shim.js demo/chrome/dist/
-RUN sed -i 's#</body>#  <script src="./wisp-opts-guard.js"></script>\n  <script src="./ime-shim.js"></script>\n</body>#' demo/chrome/dist/index.html \
+COPY wisp-opts-guard.js ime-shim.js download-bridge.js demo/chrome/dist/
+RUN sed -i 's#</body>#  <script src="./wisp-opts-guard.js"></script>\n  <script src="./ime-shim.js"></script>\n  <script src="./download-bridge.js"></script>\n</body>#' demo/chrome/dist/index.html \
     && grep -q 'ime-shim.js' demo/chrome/dist/index.html \
-    && grep -q 'wisp-opts-guard.js' demo/chrome/dist/index.html
+    && grep -q 'wisp-opts-guard.js' demo/chrome/dist/index.html \
+    && grep -q 'download-bridge.js' demo/chrome/dist/index.html
 
 # 配信サーバーの依存もツールチェーンのある builder 側でインストールし、
 # ランタイムステージには node_modules をコピーするだけにする
